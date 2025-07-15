@@ -1,0 +1,17 @@
+{
+  "include": [
+    "awslabs",
+    "tests"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "**/.venv",
+    "**/node_modules"
+  ],
+  "reportMissingImports": false,
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.10",
+  "venvPath": ".",
+  "venv": ".venv"
+}
