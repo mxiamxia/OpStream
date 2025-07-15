@@ -16,7 +16,7 @@ Traditional AI tools force users to wait passively during long operations like a
 
 ### Original Design Diagram
 
-<img src="docs/architecture-diagram.png" alt="OpStream Architecture Flow" width="600" style="transform: rotate(90deg); transform-origin: center;">
+<img src="docs/arch.PNG" alt="OpStream Architecture Flow" width="600">
 
 *Original hand-drawn architecture showing the flow from Q0 (user query) through Slack interface, scheduler, MCP tools, LLM agent, to persistent storage.*
 
