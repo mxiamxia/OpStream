@@ -1,0 +1,27 @@
+{
+  "name": "aws-knowledge-slack-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "upload-doc": "node upload-document.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "slack",
+    "bot",
+    "aws",
+    "knowledge-base",
+    "bedrock"
+  ],
+  "author": "",
+  "license": "ISC",
+  "description": "A Slack bot that answers questions based on an AWS knowledge base",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.765.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.758.0",
+    "@slack/bolt": "^4.2.1",
+    "aws-sdk": "^2.1692.0",
+    "dotenv": "^16.4.7"
+  }
+}

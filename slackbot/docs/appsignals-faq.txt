@@ -1,0 +1,264 @@
+CloudWatch Application Signals Troubleshooting Guide
+
+Overview
+This document contains detailed troubleshooting tips for CloudWatch Application Signals, addressing common issues and their solutions.
+
+Common Issues and Solutions
+
+1. Application Signals Java Layer Cold Start Performance
+Problem: Adding the Application Signals Layer to Java Lambda functions increases the startup latency (cold start time).
+
+Detailed Solution:
+The increased startup latency is due to the initialization of the Application Signals instrumentation
+For time-sensitive functions, evaluate if the monitoring benefits outweigh the performance impact
+Consider using provisioned concurrency to keep functions warm
+Implement function optimization techniques:
+    - Minimize dependency size
+    - Use custom runtimes
+    - Optimize function memory allocation
+Monitor cold start metrics before and after enabling Application Signals to measure impact
+
+2. Application Start Failure After Enabling Application Signals
+Problem: Application fails to start after enabling Application Signals.
+
+Detailed Solution:
+Check application logs for specific startup errors
+Verify Application Signals configuration:
+    - Ensure correct instrumentation setup
+    - Check environment variables
+    - Validate AWS credentials and permissions
+Common causes:
+    - Missing dependencies
+    - Incorrect configuration
+    - Permission issues
+    - Version conflicts
+Resolution steps:
+    1. Review error messages in application logs
+    2. Verify all required dependencies are installed
+    3. Check configuration settings match documentation
+    4. Ensure proper IAM roles and permissions
+    5. Validate version compatibility with your runtime
+
+3. Python Application Start Issues
+Problem: Python application fails to start after enabling Application Signals.
+
+Detailed Solution:
+Verify Python environment:
+    - Check Python version compatibility (supported versions)
+    - Validate virtual environment if used
+    - Ensure all required packages are installed
+Common issues:
+    - Missing OpenTelemetry dependencies
+    - Incorrect instrumentation configuration
+    - Conflicting package versions
+Resolution steps:
+    1. Install required dependencies:
+       Run: pip install aws-otel-sdk
+    2. Check for package conflicts:
+       Run: pip freeze | grep opentelemetry
+    3. Verify configuration in your Python code
+    4. Review application logs for specific error messages
+
+4. WSGI Server Integration Issues
+Problem: No Application Signals data appears for Python applications using WSGI servers.
+
+Detailed Solution:
+WSGI server specific requirements:
+    - Ensure proper middleware configuration
+    - Verify instrumentation order
+    - Check server compatibility
+Configuration steps:
+    1. Add OpenTelemetry WSGI middleware
+    2. Configure WSGI application wrapper
+    3. Set required environment variables
+    4. Verify logging configuration
+Common fixes:
+    - Update WSGI configuration
+    - Check middleware order
+    - Verify instrumentation initialization
+    - Enable debug logging for troubleshooting
+
+5. Node.js Telemetry Issues
+Problem: Node.js application not generating Application Signals telemetry.
+
+Detailed Solution:
+Required setup:
+    - Install AWS Distro for OpenTelemetry
+    - Configure Node.js instrumentation
+    - Set up automatic instrumentation
+Verification steps:
+    1. Check package.json for required dependencies
+    2. Verify instrumentation initialization
+    3. Enable debug logging
+    4. Check AWS credentials and permissions
+Common issues:
+    - Missing or incorrect instrumentation
+    - SDK initialization problems
+    - Configuration errors
+    - Permission issues
+
+6. Dashboard Data Issues
+Problem: No data appearing in Application Signals dashboard.
+
+Detailed Solution:
+Check data pipeline:
+    1. Verify data collection is enabled
+    2. Check IAM roles and permissions
+    3. Validate metric configuration
+    4. Review CloudWatch logs
+Common causes:
+    - Insufficient IAM permissions
+    - Incorrect region configuration
+    - Network connectivity issues
+    - Data reporting delays
+Resolution steps:
+    1. Verify IAM roles have required permissions
+    2. Check CloudWatch agent configuration
+    3. Validate network connectivity
+    4. Allow sufficient time for data propagation
+
+7. Service Metrics Issues
+Problem: Service metrics or dependency metrics show unknown values.
+
+Detailed Solution:
+Troubleshooting steps:
+    1. Verify metric collection configuration
+    2. Check service dependencies setup
+    3. Validate reporting pipeline
+    4. Review metric definitions
+Common issues:
+    - Incorrect metric configuration
+    - Missing dependencies
+    - Data collection issues
+    - Integration problems
+Resolution:
+    - Update metric configurations
+    - Verify service connections
+    - Check metric namespaces
+    - Enable detailed monitoring if needed
+
+8. EKS Add-on Configuration Conflicts
+Problem: ConfigurationConflict when managing CloudWatch Observability EKS add-on.
+
+Detailed Solution:
+Understanding the conflict:
+    - Multiple configurations detected
+    - Version compatibility issues
+    - Resource conflicts
+Resolution process:
+    1. Review existing configurations
+    2. Identify conflicting settings
+    3. Back up current configuration
+    4. Remove conflicting settings
+    5. Apply new configuration
+    6. Verify changes
+Best practices:
+    - Use version control for configurations
+    - Follow proper upgrade procedures
+    - Test changes in non-production first
+
+9. Metric and Trace Filtering
+Problem: Need to filter out unnecessary metrics and traces.
+
+Detailed Solution:
+Available filtering methods:
+    - Sampling configuration
+    - Metric filters
+    - Trace filters
+    - Custom rules
+Implementation steps:
+    1. Define filtering criteria
+    2. Configure sampling rules
+    3. Set up metric filters
+    4. Implement custom filtering logic
+Best practices:
+    - Start with conservative filtering
+    - Monitor impact on visibility
+    - Regularly review and adjust filters
+    - Document filtering rules
+
+10. .NET Application Logging
+Problem: Need to enable and configure logging for .NET applications.
+
+Detailed Solution:
+Configuration steps:
+    1. Add logging providers
+    2. Configure log levels
+    3. Set up log sinks
+    4. Enable Application Insights
+Implementation:
+    - Configure appsettings.json
+    - Set up logging middleware
+    - Configure log categories
+    - Enable structured logging
+Best practices:
+    - Use appropriate log levels
+    - Configure log sampling
+    - Implement log rotation
+    - Monitor log volume
+
+11. .NET Assembly Version Conflicts
+Problem: Assembly version conflicts in .NET applications.
+
+Detailed Solution:
+Resolution steps:
+    1. Identify conflicting assemblies
+    2. Review binding redirects
+    3. Update package references
+    4. Resolve dependency conflicts
+Common causes:
+    - Multiple versions of same assembly
+    - Incompatible dependencies
+    - Missing binding redirects
+Best practices:
+    - Use package management
+    - Maintain consistent versions
+    - Document dependencies
+    - Test after updates
+
+12. FluentBit Configuration
+Problem: Need to disable or configure FluentBit.
+
+Detailed Solution:
+Configuration options:
+    - Disable FluentBit completely
+    - Modify logging pipeline
+    - Update configuration
+Implementation steps:
+    1. Locate configuration files
+    2. Update settings
+    3. Restart services
+    4. Verify changes
+Best practices:
+    - Back up configurations
+    - Test changes
+    - Monitor impact
+    - Document modifications
+
+13. Container Log Filtering
+Problem: Need to filter container logs before CloudWatch export.
+
+Detailed Solution:
+Filtering methods:
+    - Log router configuration
+    - FluentBit filters
+    - Custom parsing rules
+    - Exclusion patterns
+Implementation:
+    1. Define filtering requirements
+    2. Configure log router
+    3. Set up parsing rules
+    4. Test filtering
+Best practices:
+    - Start with test environment
+    - Monitor log volume
+    - Regular filter maintenance
+    - Document filter rules
+
+Additional Resources
+- AWS CloudWatch Documentation
+- Application Signals User Guide
+- AWS Lambda Documentation
+- Container Insights Documentation
+- EKS Troubleshooting Guide
+- OpenTelemetry Documentation

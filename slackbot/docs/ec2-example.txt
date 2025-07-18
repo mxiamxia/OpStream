@@ -1,0 +1,60 @@
+AWS EC2 (Elastic Compute Cloud) Overview
+
+EC2 is a web service that provides resizable compute capacity in the cloud. It is designed to make web-scale cloud computing easier for developers. EC2 offers a wide range of instance types optimized for different use cases.
+
+Common EC2 Instance Types:
+
+1. General Purpose Instances (e.g., t3, m5)
+   - Balanced compute, memory, and network resources
+   - Suitable for web servers, development environments, and code repositories
+
+2. Compute Optimized Instances (e.g., c5, c6g)
+   - High performance processors
+   - Ideal for batch processing, high performance computing, and gaming servers
+
+3. Memory Optimized Instances (e.g., r5, x1, z1)
+   - Fast performance for workloads that process large data sets in memory
+   - Good for high-performance databases, distributed web caches, and in-memory analytics
+
+4. Storage Optimized Instances (e.g., d2, i3, h1)
+   - High, sequential read/write access to very large data sets
+   - Ideal for data warehousing, log processing, and distributed file systems
+
+EC2 Pricing Models:
+
+1. On-Demand Instances
+   - Pay for compute capacity by the hour with no long-term commitments
+   - Recommended for short-term, irregular workloads
+
+2. Reserved Instances
+   - Significant discount compared to On-Demand
+   - Commitment to a one or three-year term
+   - Available in Standard, Convertible, and Scheduled types
+
+3. Spot Instances
+   - Request spare computing capacity at steep discounts
+   - Prices fluctuate based on supply and demand
+   - Can be terminated if EC2 needs the capacity back
+
+4. Dedicated Hosts
+   - Physical servers dedicated for your use
+   - Can help meet compliance requirements
+   - Allows you to use your existing server-bound software licenses
+
+Key EC2 Features:
+
+- Amazon Machine Images (AMIs): Pre-configured templates for instances
+- Elastic Block Store (EBS): Persistent block storage volumes
+- Security Groups: Virtual firewalls that control traffic to instances
+- Elastic IP Addresses: Static IPv4 addresses for dynamic cloud computing
+- Auto Scaling: Automatically add or remove capacity based on demand
+- Load Balancing: Distribute incoming traffic across multiple instances
+
+Best Practices:
+
+1. Always use security groups to restrict access to your instances
+2. Use IAM roles for EC2 instances instead of storing AWS credentials on instances
+3. Regularly back up your instances using EBS snapshots or AMIs
+4. Use tags to organize and manage your EC2 resources
+5. Monitor your instances using Amazon CloudWatch
+6. Choose the right instance type and pricing model for your workload
