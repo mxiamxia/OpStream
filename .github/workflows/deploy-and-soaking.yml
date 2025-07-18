@@ -1,0 +1,73 @@
+name: DeployAndSoaking
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'appointment-service/**'
+
+jobs:
+  deploy-and-soak:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: |
+          cd appointment-service
+          pip install -r requirements.txt
+          
+      - name: Start appointment service and run for 30 minutes
+        run: |
+          cd appointment-service
+          echo "Starting appointment service with OpenTelemetry..."
+          export OTEL_PYTHON_DISTRO=aws_distro
+          export OTEL_TRACES_EXPORTER=none
+          export OTEL_LOGS_EXPORTER=none
+          export OTEL_METRICS_EXPORTER=awsemf
+          export OTEL_PYTHON_CONFIGURATOR=aws_configurator
+          export OTEL_EXPORTER_OTLP_LOGS_HEADERS=x-aws-log-group=hackathon-apm,x-aws-log-stream=default,x-aws-metric-namespace=hackathon-apm
+          export OTEL_RESOURCE_ATTRIBUTES=service.name=AppointmentService,aws.log.group.names=hackathon-apm
+          opentelemetry-instrument python app.py &
+          SERVICE_PID=$!
+          echo "Service started with PID: $SERVICE_PID"
+          
+          echo "Waiting for service to be ready..."
+          sleep 10
+          
+          echo "Starting traffic generation..."
+          (
+            START_TIME=$(date +%s)
+            END_TIME=$((START_TIME + 1800))  # 30 minutes = 1800 seconds
+            i=1
+            while [ $(date +%s) -lt $END_TIME ]; do
+              curl -s -X POST http://localhost:5000/createAppointment \
+                -H "Content-Type: application/json" \
+                -d "{
+                  \"patient_name\": \"Patient $i\",
+                  \"doctor_name\": \"Dr. Test\",
+                  \"appointment_date\": \"2024-01-25\",
+                  \"appointment_time\": \"$((9 + i % 8)):00 AM\",
+                  \"notes\": \"Test appointment $i\"
+                }" > /dev/null
+              i=$((i + 1))
+              sleep 0.1
+            done
+          ) &
+          TRAFFIC_PID=$!
+          
+          echo "Running soak test for 30 minutes..."
+          sleep 1800  # 30 minutes = 1800 seconds
+          
+          echo "Stopping traffic generation and appointment service..."
+          kill $TRAFFIC_PID 2>/dev/null || true
+          kill $SERVICE_PID
+          echo "Soak test completed successfully"
