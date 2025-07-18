@@ -26,7 +26,7 @@ meter = metrics.get_meter(__name__)
 memory_usage_gauge = meter.create_gauge(
     name="MemUsage",
     description="Memory usage of the appointment service in MB",
-    unit="MB"
+    unit="Megabytes"
 )
 
 def emit_memory_metrics():
