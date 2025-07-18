@@ -1458,7 +1458,7 @@ async def deploy_helper(
     This prompt is for follow-up task of deploy_helper MCP tool. There are several tasks to do:
     - call deploy_watcher MCP tool
     - format output of deploy_watcher MCP tool as json string like below.
-      {"status": "PENDING", "message": "output of deploy_watcher MCP tool"}
+      {"workflow_status": "PENDING" or "COMPLETE", "alarm_status": "SUCCESS" or "FAILURE"}
     """
     
     logger.info(f'Starting deploy_helper - branch: {branch}, table: {table_name}')
