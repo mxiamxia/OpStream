@@ -95,12 +95,71 @@ jobs:
           echo "Deployment and soak test completed successfully"
           EOF
           
-          # Upload and execute deployment script
-          SCRIPT_CONTENT=$(cat deploy.sh)
+          # Upload and execute deployment script using parameter file
+          cat > parameters.json << 'JSONEOF'
+          {
+            "commands": [
+              "#!/bin/bash",
+              "set -e",
+              "",
+              "echo 'Stopping any existing application...'",
+              "pkill -f 'python3 app.py' || true",
+              "pkill -f 'curl_examples.sh' || true",
+              "",
+              "echo 'Updating code from master branch...'",
+              "cd /home/ec2-user/OpStream || {",
+              "  echo 'Repository not found, cloning...'",
+              "  cd /home/ec2-user",
+              "  git clone https://github.com/${{ github.repository }}.git OpStream",
+              "  cd OpStream",
+              "}",
+              "",
+              "git fetch origin",
+              "git reset --hard origin/master",
+              "",
+              "echo 'Installing/updating dependencies...'",
+              "cd appointment-service",
+              "pip3 install -r requirements.txt",
+              "",
+              "echo 'Starting application with logging...'",
+              "export OTEL_PYTHON_DISTRO=aws_distro",
+              "export OTEL_TRACES_EXPORTER=none",
+              "export OTEL_LOGS_EXPORTER=none",
+              "export OTEL_METRICS_EXPORTER=awsemf",
+              "export OTEL_PYTHON_CONFIGURATOR=aws_configurator",
+              "export OTEL_EXPORTER_OTLP_LOGS_HEADERS=x-aws-log-group=hackathon-apm,x-aws-log-stream=default,x-aws-metric-namespace=hackathon-apm",
+              "export OTEL_RESOURCE_ATTRIBUTES=service.name=AppointmentService,aws.log.group.names=hackathon-apm",
+              "",
+              "opentelemetry-instrument python3 app.py > app.log 2>&1 &",
+              "APP_PID=$!",
+              "echo 'Application started with PID: $APP_PID'",
+              "",
+              "echo 'Waiting for application to be ready...'",
+              "sleep 10",
+              "",
+              "echo 'Starting traffic generation...'",
+              "chmod +x curl_examples.sh",
+              "./curl_examples.sh &",
+              "TRAFFIC_PID=$!",
+              "",
+              "echo 'Running for 30 minutes...'",
+              "sleep 1800",
+              "",
+              "echo 'Stopping traffic generation...'",
+              "kill $TRAFFIC_PID 2>/dev/null || true",
+              "",
+              "echo 'Application logs:'",
+              "tail -50 app.log",
+              "",
+              "echo 'Deployment and soak test completed successfully'"
+            ]
+          }
+          JSONEOF
+          
           aws ssm send-command \
             --instance-ids $INSTANCE_ID \
             --document-name "AWS-RunShellScript" \
-            --parameters "commands=[\"$SCRIPT_CONTENT\"]" \
+            --cli-input-json file://parameters.json \
             --output text \
             --query 'Command.CommandId' > command_id.txt
           
