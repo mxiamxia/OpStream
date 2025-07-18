@@ -51,6 +51,7 @@ try:
     appsignals_client = boto3.client('application-signals', region_name=AWS_REGION, config=config)
     cloudwatch_client = boto3.client('cloudwatch', region_name=AWS_REGION, config=config)
     xray_client = boto3.client('xray', region_name=AWS_REGION, config=config)
+    dynamodb_client = boto3.client('dynamodb', region_name=AWS_REGION, config=config)
     logger.debug('AWS clients initialized successfully')
 except Exception as e:
     logger.error(f'Failed to initialize AWS clients: {str(e)}')
@@ -1329,6 +1330,157 @@ async def query_sampled_traces(
         logger.error(f'Error in query_sampled_traces: {str(e)}', exc_info=True)
         return json.dumps({'error': str(e)}, indent=2)
 
+@mcp.tool()
+async def deploy_helper(
+    branch: str = Field(default='main', description='Git branch to push'),
+    remote: str = Field(default='origin', description='Git remote to push to'),
+) -> str:
+    """Deploy code changes by pushing to a remote repository and triggering deployment monitoring.
+    
+    Use this tool for:
+    - Deploying application changes to production or staging environments
+    - Pushing code changes to the remote repository
+    - Initiating automated deployment workflows
+    - Tracking deployments with monitoring and observability
+    
+    This is the primary tool for code deployment operations. It:
+    1. Pushes your changes to the specified remote repository and branch
+    2. Records deployment metadata in DynamoDB for tracking and monitoring
+    3. Enables automated post-deployment verification via deploy_watcher
+    
+    The tool automatically captures the commit SHA and uses it as a unique deployment ID,
+    making it easy to correlate deployments with code changes and monitoring data.
+    
+    Returns a detailed status message indicating success or failure of the deployment operations.
+    """
+    start_time_perf = timer()
+    
+    # Define constants
+    table_name = "appsignals-async-jobs"
+    prompt_string = """
+    This prompt is for follow-up task of deploy_helper MCP tool. There are several tasks to do:
+    - call deploy_watcher MCP tool
+    - format output of deploy_watcher MCP tool as json string like below.
+      {"status": "PENDING", "message": "output of deploy_watcher MCP tool"}
+    """
+    
+    logger.info(f'Starting deploy_helper - branch: {branch}, table: {table_name}')
+    
+    result = ""
+    git_success = False
+    ddb_success = False
+    
+    # Initialize variables that might be used later
+    current_branch = branch
+    commit_sha = None
+    
+    try:
+        try:
+            import subprocess
+            
+            # Check if we're on the right branch
+            branch_check = subprocess.run(
+                ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            current_branch = branch_check.stdout.strip()
+            
+            if current_branch != branch:
+                logger.warning(f'Currently on branch {current_branch}, not {branch}')
+                result += f'⚠️ Warning: Currently on branch {current_branch}, not {branch}\n'
+            
+            # Get current commit SHA
+            sha_result = subprocess.run(
+                ['git', 'rev-parse', 'HEAD'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            commit_sha = sha_result.stdout.strip()
+            
+            # Push to remote
+            logger.debug(f'Pushing to remote {remote} branch {current_branch}')
+            push_result = subprocess.run(
+                ['git', 'push', remote, current_branch],
+                capture_output=True,
+                text=True
+            )
+            
+            if push_result.returncode == 0:
+                git_success = True
+                result += f'✅ Git push successful to {remote}/{current_branch}\n'
+                logger.info(f'Git push successful to {remote}/{current_branch}')
+            else:
+                git_success = False
+                result += f'❌ Git push failed: {push_result.stderr}\n'
+                logger.error(f'Git push failed: {push_result.stderr}')
+        
+        except Exception as e:
+            result += f'❌ Git operation error: {str(e)}\n'
+            logger.error(f'Git operation error: {str(e)}', exc_info=True)
+        
+        # Write to DynamoDB
+        logger.debug(f'Writing prompt to DynamoDB table {table_name}')
+        
+        try:
+            # Generate a timestamp for the record
+            timestamp = datetime.now(timezone.utc).isoformat()
+            
+            # Create the DynamoDB item
+            # Use short SHA as JobId if available, otherwise use timestamp
+            job_id = commit_sha[:8] if commit_sha else f'job_{int(datetime.now(timezone.utc).timestamp())}'
+            
+            item = {
+                'job_id': {'S': job_id},
+                'status': {'S': "open"},
+                'prompt': {'S': prompt_string},
+                'updated_at': {'S': timestamp}
+            }
+            
+            # Put the item in the DynamoDB table
+            dynamodb_client.put_item(
+                TableName=table_name,
+                Item=item
+            )
+            
+            ddb_success = True
+            result += f'✅ Prompt written to DynamoDB table {table_name}\n'
+            logger.info(f'Prompt written to DynamoDB table {table_name}')
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_message = e.response.get('Error', {}).get('Message', 'Unknown error')
+            result += f'❌ DynamoDB error: {error_code} - {error_message}\n'
+            logger.error(f'DynamoDB ClientError: {error_code} - {error_message}')
+            
+            # Check if table doesn't exist and provide helpful message
+            if error_code == 'ResourceNotFoundException':
+                result += f'   Table {table_name} does not exist. Create it with:\n'
+                result += f'   aws dynamodb create-table --table-name {table_name} --attribute-definitions AttributeName=JobId,AttributeType=S --key-schema AttributeName=JobId,KeyType=HASH --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5\n'
+        
+        except Exception as e:
+            result += f'❌ DynamoDB operation error: {str(e)}\n'
+            logger.error(f'DynamoDB operation error: {str(e)}', exc_info=True)
+        
+        # Final status
+        if git_success and ddb_success:
+            result += '\n✅ All operations completed successfully'
+        elif git_success:
+            result += '\n⚠️ Git push successful but DynamoDB write failed'
+        elif ddb_success:
+            result += '\n⚠️ DynamoDB write successful but Git push failed'
+        else:
+            result += '\n❌ Both Git push and DynamoDB write failed'
+        
+        elapsed_time = timer() - start_time_perf
+        logger.info(f'deploy_helper completed in {elapsed_time:.3f}s - Git: {git_success}, DDB: {ddb_success}')
+        return result
+        
+    except Exception as e:
+        logger.error(f'Unexpected error in deploy_helper: {str(e)}', exc_info=True)
+        return f'Error: {str(e)}'
 
 def main():
     """Run the MCP server."""
