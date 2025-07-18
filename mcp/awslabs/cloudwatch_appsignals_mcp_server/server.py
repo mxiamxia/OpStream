@@ -1432,28 +1432,25 @@ async def deploy_helper(
     branch: str = Field(default='main', description='Git branch to push'),
     remote: str = Field(default='origin', description='Git remote to push to'),
 ) -> str:
-    """Deploy code changes by pushing to a remote repository and triggering deployment monitoring.
+    """Deploy code changes by pushing to a remote repository.
     
     Use this tool for:
     - Deploying application changes to production or staging environments
     - Pushing code changes to the remote repository
     - Initiating automated deployment workflows
-    - Tracking deployments with monitoring and observability
     
-    This is the primary tool for code deployment operations. It:
+    This tool handles the git operations part of deployment:
     1. Pushes your changes to the specified remote repository and branch
-    2. Records deployment metadata in DynamoDB for tracking and monitoring
-    3. Enables automated post-deployment verification via deploy_watcher
+    2. Captures the commit SHA for tracking purposes
     
-    The tool automatically captures the commit SHA and uses it as a unique deployment ID,
-    making it easy to correlate deployments with code changes and monitoring data.
+    After successful deployment, you should call register_event with the commit SHA
+    to record the deployment in DynamoDB for monitoring and tracking.
     
-    Returns a detailed status message indicating success or failure of the deployment operations.
+    Returns a detailed status message indicating success or failure of the git operations.
     """
     start_time_perf = timer()
     
     # Define constants
-    table_name = "appsignals-async-jobs"
     prompt_string = """
     This prompt is for follow-up task of deploy_helper MCP tool. There are several tasks to do:
     - call deploy_watcher MCP tool
@@ -1461,11 +1458,10 @@ async def deploy_helper(
       {"workflow_status": "PENDING" or "COMPLETE", "alarm_status": "SUCCESS" or "FAILURE"}
     """
     
-    logger.info(f'Starting deploy_helper - branch: {branch}, table: {table_name}')
+    logger.info(f'Starting deploy_helper - branch: {branch}')
     
     result = ""
     git_success = False
-    ddb_success = False
     
     # Initialize variables that might be used later
     current_branch = branch
@@ -1509,6 +1505,14 @@ async def deploy_helper(
                 git_success = True
                 result += f'✅ Git push successful to {remote}/{current_branch}\n'
                 logger.info(f'Git push successful to {remote}/{current_branch}')
+                
+                # Add prompt to call register_event
+                if commit_sha:
+                    result += f'\nNext steps:\n'
+                    result += f'1. Call register_event with the following parameters:\n'
+                    result += f'   - prompt: "{prompt_string}"\n'
+                    result += f'   - id: "{commit_sha}"\n'
+                    result += f'\nThis will register the deployment event in DynamoDB for monitoring.'
             else:
                 git_success = False
                 result += f'❌ Git push failed: {push_result.stderr}\n'
@@ -1518,6 +1522,50 @@ async def deploy_helper(
             result += f'❌ Git operation error: {str(e)}\n'
             logger.error(f'Git operation error: {str(e)}', exc_info=True)
         
+        # Final status
+        if git_success:
+            result += '\n✅ Git operations completed successfully'
+        else:
+            result += '\n❌ Git operations failed'
+        
+        elapsed_time = timer() - start_time_perf
+        logger.info(f'deploy_helper completed in {elapsed_time:.3f}s - Git: {git_success}')
+        return result
+        
+    except Exception as e:
+        logger.error(f'Unexpected error in deploy_helper: {str(e)}', exc_info=True)
+        return f'Error: {str(e)}'
+
+@mcp.tool()
+async def register_event(
+    prompt: str = Field(..., description='Prompt string to register in DynamoDB'),
+    id: str = Field(default=None, description='Unique identifier to use as job ID (optional)'),
+) -> str:
+    """Register events in DynamoDB for tracking and monitoring.
+    
+    Use this tool for:
+    - Recording event metadata in DynamoDB for any type of event
+    - Tracking various operations including deployments, monitoring tasks, etc.
+    - Setting up automated follow-up actions based on the event
+    
+    This tool handles the database operations:
+    1. Records the provided prompt in DynamoDB
+    2. Uses the provided ID as a unique identifier when available
+    3. Enables automated follow-up actions via the prompt
+    
+    Returns a detailed status message indicating success or failure of the database operations.
+    """
+    start_time_perf = timer()
+    
+    # Define constants
+    table_name = "appsignals-async-jobs"
+    
+    logger.info(f'Starting register_event - table: {table_name}')
+    
+    result = ""
+    ddb_success = False
+    
+    try:
         # Write to DynamoDB
         logger.debug(f'Writing prompt to DynamoDB table {table_name}')
         
@@ -1526,13 +1574,13 @@ async def deploy_helper(
             timestamp = datetime.now(timezone.utc).isoformat()
             
             # Create the DynamoDB item
-            # Use short SHA as JobId if available, otherwise use timestamp
-            job_id = commit_sha[:8] if commit_sha else f'job_{int(datetime.now(timezone.utc).timestamp())}'
+            # Use provided ID if available, otherwise use timestamp
+            job_id = id[:8] if id else f'job_{int(datetime.now(timezone.utc).timestamp())}'
             
             item = {
                 'job_id': {'S': job_id},
                 'status': {'S': "open"},
-                'prompt': {'S': prompt_string},
+                'prompt': {'S': prompt},
                 'updated_at': {'S': timestamp}
             }
             
@@ -1555,28 +1603,211 @@ async def deploy_helper(
             # Check if table doesn't exist and provide helpful message
             if error_code == 'ResourceNotFoundException':
                 result += f'   Table {table_name} does not exist. Create it with:\n'
-                result += f'   aws dynamodb create-table --table-name {table_name} --attribute-definitions AttributeName=JobId,AttributeType=S --key-schema AttributeName=JobId,KeyType=HASH --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5\n'
+                result += f'   aws dynamodb create-table --table-name {table_name} --attribute-definitions AttributeName=job_id,AttributeType=S --key-schema AttributeName=job_id,KeyType=HASH --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5\n'
         
         except Exception as e:
             result += f'❌ DynamoDB operation error: {str(e)}\n'
             logger.error(f'DynamoDB operation error: {str(e)}', exc_info=True)
         
         # Final status
-        if git_success and ddb_success:
-            result += '\n✅ All operations completed successfully'
-        elif git_success:
-            result += '\n⚠️ Git push successful but DynamoDB write failed'
-        elif ddb_success:
-            result += '\n⚠️ DynamoDB write successful but Git push failed'
+        if ddb_success:
+            result += '\n✅ Event registration completed successfully'
         else:
-            result += '\n❌ Both Git push and DynamoDB write failed'
+            result += '\n❌ Event registration failed'
         
         elapsed_time = timer() - start_time_perf
-        logger.info(f'deploy_helper completed in {elapsed_time:.3f}s - Git: {git_success}, DDB: {ddb_success}')
+        logger.info(f'register_event completed in {elapsed_time:.3f}s - DDB: {ddb_success}')
         return result
         
     except Exception as e:
-        logger.error(f'Unexpected error in deploy_helper: {str(e)}', exc_info=True)
+        logger.error(f'Unexpected error in register_event: {str(e)}', exc_info=True)
+        return f'Error: {str(e)}'
+
+@mcp.tool()
+async def list_events(
+    status: str = Field(default=None, description='Filter events by status (e.g., "open", "closed")'),
+    limit: int = Field(default=50, description='Maximum number of events to return (default: 50)'),
+) -> str:
+    """List events from DynamoDB for tracking and monitoring.
+    
+    Use this tool to:
+    - View all registered events in the system
+    - Filter events by status (open, closed, etc.)
+    - Monitor ongoing operations and their status
+    - Track historical events and their outcomes
+    
+    This tool retrieves events from the DynamoDB table:
+    1. Queries the events database with optional status filter
+    2. Returns a formatted list of events with their details
+    3. Shows job IDs, status, timestamps, and prompt information
+    
+    Returns a detailed list of events with their metadata and status.
+    """
+    start_time_perf = timer()
+    
+    # Define constants
+    table_name = "appsignals-async-jobs"
+    
+    logger.info(f'Starting list_events - table: {table_name}, status filter: {status}, limit: {limit}')
+    
+    result = ""
+    
+    try:
+        # Query DynamoDB
+        logger.debug(f'Querying DynamoDB table {table_name}')
+        
+        try:
+            # Build scan parameters
+            scan_params = {
+                'TableName': table_name,
+                'Limit': limit
+            }
+            
+            # Add status filter if provided
+            if status:
+                scan_params['FilterExpression'] = '#status = :status_val'
+                scan_params['ExpressionAttributeNames'] = {'#status': 'status'}
+                scan_params['ExpressionAttributeValues'] = {':status_val': {'S': status}}
+            
+            # Scan the table
+            response = dynamodb_client.scan(**scan_params)
+            
+            items = response.get('Items', [])
+            
+            # Format the result
+            result += f'Events from {table_name} ({len(items)} found)\n'
+            result += '=' * 50 + '\n\n'
+            
+            if not items:
+                result += 'No events found.\n'
+            else:
+                # Sort items by updated_at timestamp (newest first)
+                items.sort(
+                    key=lambda x: x.get('updated_at', {}).get('S', ''),
+                    reverse=True
+                )
+                
+                for item in items:
+                    job_id = item.get('job_id', {}).get('S', 'Unknown')
+                    item_status = item.get('status', {}).get('S', 'Unknown')
+                    updated_at = item.get('updated_at', {}).get('S', 'Unknown')
+                    prompt = item.get('prompt', {}).get('S', '')
+                    
+                    # Truncate prompt if too long
+                    if len(prompt) > 100:
+                        prompt = prompt[:97] + '...'
+                    
+                    result += f'Job ID: {job_id}\n'
+                    result += f'Status: {item_status}\n'
+                    result += f'Updated: {updated_at}\n'
+                    result += f'Prompt: {prompt}\n'
+                    result += '-' * 50 + '\n'
+            
+            logger.info(f'Successfully retrieved {len(items)} events from DynamoDB')
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_message = e.response.get('Error', {}).get('Message', 'Unknown error')
+            result += f'❌ DynamoDB error: {error_code} - {error_message}\n'
+            logger.error(f'DynamoDB ClientError: {error_code} - {error_message}')
+            
+            # Check if table doesn't exist and provide helpful message
+            if error_code == 'ResourceNotFoundException':
+                result += f'   Table {table_name} does not exist. Create it with:\n'
+                result += f'   aws dynamodb create-table --table-name {table_name} --attribute-definitions AttributeName=job_id,AttributeType=S --key-schema AttributeName=job_id,KeyType=HASH --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5\n'
+        
+        except Exception as e:
+            result += f'❌ DynamoDB operation error: {str(e)}\n'
+            logger.error(f'DynamoDB operation error: {str(e)}', exc_info=True)
+        
+        elapsed_time = timer() - start_time_perf
+        logger.info(f'list_events completed in {elapsed_time:.3f}s')
+        return result
+        
+    except Exception as e:
+        logger.error(f'Unexpected error in list_events: {str(e)}', exc_info=True)
+        return f'Error: {str(e)}'
+
+@mcp.tool()
+async def delete_event(
+    job_id: str = Field(..., description='Job ID of the event to delete'),
+) -> str:
+    """Delete an event from DynamoDB by its job ID.
+    
+    Use this tool for:
+    - Removing completed or obsolete events from the tracking system
+    - Cleaning up the events database
+    - Managing event lifecycle
+    
+    This tool handles the deletion operation:
+    1. Deletes the specified event from DynamoDB using its job ID
+    2. Confirms successful deletion or reports any errors
+    
+    Returns a detailed status message indicating success or failure of the deletion operation.
+    """
+    start_time_perf = timer()
+    
+    # Define constants
+    table_name = "appsignals-async-jobs"
+    
+    logger.info(f'Starting delete_event - table: {table_name}, job_id: {job_id}')
+    
+    result = ""
+    delete_success = False
+    
+    try:
+        # Delete from DynamoDB
+        logger.debug(f'Deleting event with job_id {job_id} from DynamoDB table {table_name}')
+        
+        try:
+            # First check if the item exists
+            get_response = dynamodb_client.get_item(
+                TableName=table_name,
+                Key={'job_id': {'S': job_id}}
+            )
+            
+            if 'Item' not in get_response:
+                result += f'❌ Event with job ID {job_id} not found in table {table_name}\n'
+                logger.warning(f'Event with job ID {job_id} not found in table {table_name}')
+                return result
+            
+            # Delete the item
+            dynamodb_client.delete_item(
+                TableName=table_name,
+                Key={'job_id': {'S': job_id}}
+            )
+            
+            delete_success = True
+            result += f'✅ Event with job ID {job_id} successfully deleted from table {table_name}\n'
+            logger.info(f'Event with job ID {job_id} successfully deleted from table {table_name}')
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_message = e.response.get('Error', {}).get('Message', 'Unknown error')
+            result += f'❌ DynamoDB error: {error_code} - {error_message}\n'
+            logger.error(f'DynamoDB ClientError: {error_code} - {error_message}')
+            
+            # Check if table doesn't exist and provide helpful message
+            if error_code == 'ResourceNotFoundException':
+                result += f'   Table {table_name} does not exist. Create it with:\n'
+                result += f'   aws dynamodb create-table --table-name {table_name} --attribute-definitions AttributeName=job_id,AttributeType=S --key-schema AttributeName=job_id,KeyType=HASH --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5\n'
+        
+        except Exception as e:
+            result += f'❌ DynamoDB operation error: {str(e)}\n'
+            logger.error(f'DynamoDB operation error: {str(e)}', exc_info=True)
+        
+        # Final status
+        if delete_success:
+            result += '\n✅ Event deletion completed successfully'
+        else:
+            result += '\n❌ Event deletion failed'
+        
+        elapsed_time = timer() - start_time_perf
+        logger.info(f'delete_event completed in {elapsed_time:.3f}s - Success: {delete_success}')
+        return result
+        
+    except Exception as e:
+        logger.error(f'Unexpected error in delete_event: {str(e)}', exc_info=True)
         return f'Error: {str(e)}'
 
 def main():
