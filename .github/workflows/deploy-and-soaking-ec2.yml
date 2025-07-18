@@ -31,152 +31,77 @@ jobs:
           
       - name: Deploy to existing EC2 instance
         run: |
-          echo "Getting instance public IP..."
-          INSTANCE_IP=$(aws ec2 describe-instances \
-            --instance-ids $INSTANCE_ID \
-            --query 'Reservations[0].Instances[0].PublicIpAddress' \
-            --output text)
-          echo "Instance IP: $INSTANCE_IP"
-          
-          echo "Creating deployment script..."
-          cat > deploy.sh << 'EOF'
-          #!/bin/bash
-          set -e
-          
-          echo "Stopping any existing application..."
-          pkill -f "python3 app.py" || true
-          pkill -f "curl_examples.sh" || true
-          
-          echo "Updating code from master branch..."
-          cd /home/ec2-user/$(basename ${{ github.repository }}) || {
-            echo "Repository not found, cloning..."
-            cd /home/ec2-user
-            git clone https://github.com/${{ github.repository }}.git
-            cd $(basename ${{ github.repository }})
-          }
-          
-          git fetch origin
-          git reset --hard origin/master
-          
-          echo "Installing/updating dependencies..."
-          cd appointment-service
-          pip3 install -r requirements.txt
-          
-          echo "Starting application with logging..."
-          export OTEL_PYTHON_DISTRO=aws_distro
-          export OTEL_TRACES_EXPORTER=none
-          export OTEL_LOGS_EXPORTER=none
-          export OTEL_METRICS_EXPORTER=awsemf
-          export OTEL_PYTHON_CONFIGURATOR=aws_configurator
-          export OTEL_EXPORTER_OTLP_LOGS_HEADERS=x-aws-log-group=hackathon-apm,x-aws-log-stream=default,x-aws-metric-namespace=hackathon-apm
-          export OTEL_RESOURCE_ATTRIBUTES=service.name=AppointmentService,aws.log.group.names=hackathon-apm
-          
-          opentelemetry-instrument python3 app.py > app.log 2>&1 &
-          APP_PID=$!
-          echo "Application started with PID: $APP_PID"
-          
-          echo "Waiting for application to be ready..."
-          sleep 10
-          
-          echo "Starting traffic generation..."
-          chmod +x curl_examples.sh
-          ./curl_examples.sh &
-          TRAFFIC_PID=$!
-          
-          echo "Running for 30 minutes..."
-          sleep 1800  # 30 minutes
-          
-          echo "Stopping traffic generation..."
-          kill $TRAFFIC_PID 2>/dev/null || true
-          
-          echo "Application logs:"
-          tail -50 app.log
-          
-          echo "Deployment and soak test completed successfully"
-          EOF
-          
-          # Upload and execute deployment script using parameter file
-          cat > parameters.json << 'JSONEOF'
-          {
-            "InstanceIds": ["i-0a0dc457cbc683c4c"],
-            "DocumentName": "AWS-RunShellScript",
-            "Parameters": {
-              "commands": [
-                "#!/bin/bash",
-                "set -e",
-                "",
-                "echo 'Stopping any existing application...'",
-                "pkill -f 'python3 app.py' || true",
-                "pkill -f 'curl_examples.sh' || true",
-                "",
-                "echo 'Updating code from master branch...'",
-                "cd /home/ec2-user/OpStream || {",
-                "  echo 'Repository not found, cloning...'",
-                "  cd /home/ec2-user",
-                "  git clone https://github.com/mxiamxia/OpStream.git OpStream",
-                "  cd OpStream",
-                "}",
-                "",
-                "git fetch origin",
-                "git reset --hard origin/master",
-                "",
-                "echo 'Installing/updating dependencies...'",
-                "cd appointment-service",
-                "pip3 install -r requirements.txt",
-                "",
-                "echo 'Starting application with logging...'",
-                "export OTEL_PYTHON_DISTRO=aws_distro",
-                "export OTEL_TRACES_EXPORTER=none",
-                "export OTEL_LOGS_EXPORTER=none",
-                "export OTEL_METRICS_EXPORTER=awsemf",
-                "export OTEL_PYTHON_CONFIGURATOR=aws_configurator",
-                "export OTEL_EXPORTER_OTLP_LOGS_HEADERS=x-aws-log-group=hackathon-apm,x-aws-log-stream=default,x-aws-metric-namespace=hackathon-apm",
-                "export OTEL_RESOURCE_ATTRIBUTES=service.name=AppointmentService,aws.log.group.names=hackathon-apm",
-                "",
-                "opentelemetry-instrument python3 app.py > app.log 2>&1 &",
-                "APP_PID=$!",
-                "echo 'Application started with PID: $APP_PID'",
-                "",
-                "echo 'Waiting for application to be ready...'",
-                "sleep 10",
-                "",
-                "echo 'Starting traffic generation...'",
-                "chmod +x curl_examples.sh",
-                "./curl_examples.sh &",
-                "TRAFFIC_PID=$!",
-                "",
-                "echo 'Running for 30 minutes...'",
-                "sleep 1800",
-                "",
-                "echo 'Stopping traffic generation...'",
-                "kill $TRAFFIC_PID 2>/dev/null || true",
-                "",
-                "echo 'Application logs:'",
-                "tail -50 app.log",
-                "",
-                "echo 'Deployment and soak test completed successfully'"
-              ]
-            }
-          }
-          JSONEOF
-          
+          echo "Step 1: Stop existing applications"
           aws ssm send-command \
-            --cli-input-json file://parameters.json \
+            --instance-ids $INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["pkill -f python3 || true","pkill -f curl || true"]' \
             --output text \
-            --query 'Command.CommandId' > command_id.txt
+            --query 'Command.CommandId' > cmd1.txt
           
-          COMMAND_ID=$(cat command_id.txt)
-          echo "Command ID: $COMMAND_ID"
+          COMMAND_ID1=$(cat cmd1.txt)
+          aws ssm wait command-executed --command-id $COMMAND_ID1 --instance-id $INSTANCE_ID
           
-          # Wait for command to complete and get output
-          echo "Waiting for deployment to complete..."
-          aws ssm wait command-executed \
-            --command-id $COMMAND_ID \
-            --instance-id $INSTANCE_ID
+          echo "Step 2: Update code repository"
+          aws ssm send-command \
+            --instance-ids $INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ec2-user","if [ ! -d OpStream ]; then git clone https://github.com/mxiamxia/OpStream.git; fi","cd OpStream","git fetch origin","git reset --hard origin/master"]' \
+            --output text \
+            --query 'Command.CommandId' > cmd2.txt
           
-          echo "Getting command output..."
+          COMMAND_ID2=$(cat cmd2.txt)
+          aws ssm wait command-executed --command-id $COMMAND_ID2 --instance-id $INSTANCE_ID
+          
+          echo "Step 3: Install dependencies"
+          aws ssm send-command \
+            --instance-ids $INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ec2-user/OpStream/appointment-service","pip3 install -r requirements.txt"]' \
+            --output text \
+            --query 'Command.CommandId' > cmd3.txt
+          
+          COMMAND_ID3=$(cat cmd3.txt)
+          aws ssm wait command-executed --command-id $COMMAND_ID3 --instance-id $INSTANCE_ID
+          
+          echo "Step 4: Start application"
+          aws ssm send-command \
+            --instance-ids $INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ec2-user/OpStream/appointment-service","export OTEL_PYTHON_DISTRO=aws_distro","export OTEL_TRACES_EXPORTER=none","export OTEL_LOGS_EXPORTER=none","export OTEL_METRICS_EXPORTER=awsemf","export OTEL_PYTHON_CONFIGURATOR=aws_configurator","export OTEL_EXPORTER_OTLP_LOGS_HEADERS=\"x-aws-log-group=hackathon-apm,x-aws-log-stream=default,x-aws-metric-namespace=hackathon-apm\"","export OTEL_RESOURCE_ATTRIBUTES=\"service.name=AppointmentService,aws.log.group.names=hackathon-apm\"","nohup opentelemetry-instrument python3 app.py > app.log 2>&1 &","sleep 5"]' \
+            --output text \
+            --query 'Command.CommandId' > cmd4.txt
+          
+          COMMAND_ID4=$(cat cmd4.txt)
+          aws ssm wait command-executed --command-id $COMMAND_ID4 --instance-id $INSTANCE_ID
+          
+          echo "Step 5: Start continuous traffic generation"
+          aws ssm send-command \
+            --instance-ids $INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ec2-user/OpStream/appointment-service","chmod +x curl_examples.sh","cat > continuous_traffic.sh << \"EOF\"","#!/bin/bash","while true; do","  ./curl_examples.sh","  echo \"Traffic batch completed, starting next batch...\"","  sleep 1","done","EOF","chmod +x continuous_traffic.sh","nohup ./continuous_traffic.sh > traffic.log 2>&1 &","echo \"Continuous traffic generation started\""]' \
+            --output text \
+            --query 'Command.CommandId' > cmd5.txt
+          
+          COMMAND_ID5=$(cat cmd5.txt)
+          aws ssm wait command-executed --command-id $COMMAND_ID5 --instance-id $INSTANCE_ID
+          
+          echo "Step 6: Get initial application logs"
+          aws ssm send-command \
+            --instance-ids $INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ec2-user/OpStream/appointment-service","echo \"=== Application Logs ====\"","tail -50 app.log","echo \"=== Traffic Logs ====\"","tail -20 traffic.log","echo \"=== End of Logs ====\""]' \
+            --output text \
+            --query 'Command.CommandId' > cmd6.txt
+          
+          COMMAND_ID6=$(cat cmd6.txt)
+          aws ssm wait command-executed --command-id $COMMAND_ID6 --instance-id $INSTANCE_ID
+          
+          echo "Getting deployment logs..."
           aws ssm get-command-invocation \
-            --command-id $COMMAND_ID \
+            --command-id $COMMAND_ID6 \
             --instance-id $INSTANCE_ID \
             --query 'StandardOutputContent' \
             --output text
+          
+          echo "Deployment completed successfully. Application and traffic generation are running continuously on EC2."
