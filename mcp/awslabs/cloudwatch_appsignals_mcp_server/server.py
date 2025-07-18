@@ -19,6 +19,7 @@ import boto3
 import json
 import os
 import sys
+import requests
 from . import __version__
 from .sli_report_client import AWSConfig, SLIReportClient
 from botocore.config import Config
@@ -1329,6 +1330,102 @@ async def query_sampled_traces(
     except Exception as e:
         logger.error(f'Error in query_sampled_traces: {str(e)}', exc_info=True)
         return json.dumps({'error': str(e)}, indent=2)
+
+@mcp.tool()
+async def deploy_watcher(
+    repo: str = Field(default='mxiamxia/OpStream', description='GitHub repository in format owner/repo'),
+) -> str:
+    """Check the status of the latest GitHub workflow and CloudWatch alarms.
+    
+    Use this tool to:
+    - Monitor the status of GitHub workflow deployments
+    - Verify if a deployment has completed successfully
+    - Check for any CloudWatch alarms triggered after deployment
+    - Get a quick health check of your application post-deployment
+    
+    This tool performs two key checks:
+    1. Verifies if the latest GitHub workflow has completed (not in progress)
+    2. If completed, checks CloudWatch for any triggered alarms
+    
+    Returns:
+    - If workflow is ongoing: Message indicating deployment is not complete
+    - If workflow is done and no alarms: Success message
+    - If workflow is done but alarms exist: Failure message with alarm details
+    
+    This tool is typically used after deploy_helper to verify deployment status.
+    """
+    start_time_perf = timer()
+    logger.info(f'Starting deploy_watcher for repo: {repo}')
+    
+    try:
+        # GitHub API URL for workflow runs
+        api_url = f"https://api.github.com/repos/{repo}/actions/runs"
+        
+        # Make request to GitHub API
+        logger.debug(f'Requesting workflow data from GitHub API: {api_url}')
+        response = requests.get(api_url)
+        
+        if response.status_code != 200:
+            error_message = f"GitHub API error: {response.status_code} - {response.text}"
+            logger.error(error_message)
+            return error_message
+        
+        # Parse response
+        workflow_data = response.json()
+        
+        # Check if there are any workflow runs
+        if not workflow_data.get('workflow_runs'):
+            logger.warning(f'No workflow runs found for repo {repo}')
+            return f"No workflow runs found for repository {repo}"
+        
+        # Get the latest workflow run
+        latest_run = workflow_data['workflow_runs'][0]
+        run_id = latest_run['id']
+        status = latest_run['status']
+        conclusion = latest_run['conclusion']
+        
+        logger.info(f'Latest workflow run: ID={run_id}, Status={status}, Conclusion={conclusion}')
+        
+        # Check if workflow is still in progress
+        if status == 'in_progress' or status == 'queued':
+            message = f"Deployment is not complete yet. Workflow is still {status}."
+            logger.info(message)
+            return message
+        
+        # If workflow is complete, check CloudWatch alarms
+        logger.debug('Workflow complete, checking CloudWatch alarms')
+        
+        # Get all alarms in ALARM state
+        alarm_response = cloudwatch_client.describe_alarms(
+            StateValue='ALARM',
+            MaxRecords=100
+        )
+        
+        alarms = alarm_response.get('MetricAlarms', [])
+        
+        if alarms:
+            # Format alarm information
+            alarm_details = []
+            for alarm in alarms:
+                alarm_name = alarm.get('AlarmName', 'Unknown')
+                alarm_desc = alarm.get('AlarmDescription', 'No description')
+                state_reason = alarm.get('StateReason', 'Unknown reason')
+                
+                alarm_details.append(f"- {alarm_name}: {state_reason}")
+            
+            alarm_list = "\n".join(alarm_details)
+            message = f"Deployment failed! Found {len(alarms)} CloudWatch alarms in ALARM state:\n{alarm_list}"
+            logger.warning(message)
+            return message
+        else:
+            message = "Deployment successful! Workflow is complete and no CloudWatch alarms detected."
+            logger.info(message)
+            return message
+    
+    except Exception as e:
+        error_message = f"Error in deploy_watcher: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        return error_message
 
 @mcp.tool()
 async def deploy_helper(
