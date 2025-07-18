@@ -96,10 +96,11 @@ jobs:
           EOF
           
           # Upload and execute deployment script
+          SCRIPT_CONTENT=$(cat deploy.sh)
           aws ssm send-command \
             --instance-ids $INSTANCE_ID \
             --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["'"$(cat deploy.sh | base64 -w 0)"'" | base64 -d | bash]' \
+            --parameters "commands=[\"$SCRIPT_CONTENT\"]" \
             --output text \
             --query 'Command.CommandId' > command_id.txt
           
