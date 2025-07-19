@@ -22,8 +22,8 @@ metric_reader = PeriodicExportingMetricReader(
 metrics.set_meter_provider(MeterProvider(metric_readers=[metric_reader]))
 meter = metrics.get_meter(__name__)
 
-# Create memory usage gauge
-memory_usage_gauge = meter.create_gauge(
+# Create memory usage histogram
+memory_usage_histogram = meter.create_histogram(
     name="MemoryUsage",
     description="Memory usage of the appointment service in MB",
     unit="Megabytes"
@@ -37,7 +37,7 @@ def emit_memory_metrics():
             appointments_bytes = len(str(appointments_storage).encode('utf-8'))
             appointments_mb = appointments_bytes / 1024 / 1024
             
-            memory_usage_gauge.set(appointments_mb, {"ServiceName": "AppointmentService"})
+            memory_usage_histogram.record(appointments_mb, {"ServiceName": "AppointmentService"})
             time.sleep(10)  # Emit every 10 seconds
         except Exception as e:
             print(f"Error emitting memory metrics: {e}")
