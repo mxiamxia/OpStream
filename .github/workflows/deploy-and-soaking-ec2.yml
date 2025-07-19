@@ -35,7 +35,7 @@ jobs:
           aws ssm send-command \
             --instance-ids $INSTANCE_ID \
             --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["sudo pkill -f python3 || echo \"No python3 processes found\"","sudo pkill -f curl || echo \"No curl processes found\"","echo \"Process cleanup completed\""]' \
+            --parameters 'commands=["echo \"Finding and killing app.py processes...\"","APP_PIDS=$(ps -ef | grep app.py | grep -v grep | awk \"{print \\$2}\")","if [ ! -z \"$APP_PIDS\" ]; then echo \"Killing app.py PIDs: $APP_PIDS\" && sudo kill -9 $APP_PIDS; else echo \"No app.py processes found\"; fi","echo \"Finding and killing curl_examples.sh processes...\"","CURL_PIDS=$(ps -ef | grep curl_examples.sh | grep -v grep | awk \"{print \\$2}\")","if [ ! -z \"$CURL_PIDS\" ]; then echo \"Killing curl_examples.sh PIDs: $CURL_PIDS\" && sudo kill -9 $CURL_PIDS; else echo \"No curl_examples.sh processes found\"; fi","echo \"Finding and killing continuous_traffic.sh processes...\"","TRAFFIC_PIDS=$(ps -ef | grep continuous_traffic.sh | grep -v grep | awk \"{print \\$2}\")","if [ ! -z \"$TRAFFIC_PIDS\" ]; then echo \"Killing continuous_traffic.sh PIDs: $TRAFFIC_PIDS\" && sudo kill -9 $TRAFFIC_PIDS; else echo \"No continuous_traffic.sh processes found\"; fi","echo \"Finding and killing curl processes...\"","CURL_PROC_PIDS=$(ps -ef | grep curl | grep -v grep | awk \"{print \\$2}\")","if [ ! -z \"$CURL_PROC_PIDS\" ]; then echo \"Killing curl PIDs: $CURL_PROC_PIDS\" && sudo kill -9 $CURL_PROC_PIDS; else echo \"No curl processes found\"; fi","echo \"Process cleanup completed\""]' \
             --output text \
             --query 'Command.CommandId' > cmd1.txt
           
