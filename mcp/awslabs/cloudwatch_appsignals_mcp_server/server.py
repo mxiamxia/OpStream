@@ -22,6 +22,7 @@ import sys
 import requests
 from . import __version__
 from .sli_report_client import AWSConfig, SLIReportClient
+from .async_monitor import AsyncTaskMonitor
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from datetime import datetime, timedelta, timezone
@@ -1809,6 +1810,86 @@ async def delete_event(
     except Exception as e:
         logger.error(f'Unexpected error in delete_event: {str(e)}', exc_info=True)
         return f'Error: {str(e)}'
+
+@mcp.tool()
+async def update_event(
+    job_id: str = Field(description="The job ID to update"),
+    workflow_status: str = Field(description="Workflow status from deploy_watcher (PENDING or COMPLETE)"),
+    alarm_status: str = Field(description="Alarm status from deploy_watcher (SUCCESS or FAILURE)")
+) -> str:
+    """Update event status based on deployment monitoring results.
+    
+    Use this tool after deploy_watcher returns deployment status to:
+    - Mark successful deployments as complete (triggers Slack notification)
+    - Keep failed deployments open for investigation
+    
+    When deploy_watcher returns:
+    - workflow_status: "COMPLETE" and alarm_status: "SUCCESS" → Event marked as complete
+    - workflow_status: "COMPLETE" and alarm_status: "FAILURE" → Event kept open
+    - workflow_status: "PENDING" → No update needed
+    
+    The async monitor will automatically send Slack notifications for completed deployments.
+    
+    Args:
+        job_id: The event/job ID to update
+        workflow_status: Status from deploy_watcher (PENDING or COMPLETE)
+        alarm_status: Alarm resolution status (SUCCESS or FAILURE)
+        
+    Returns:
+        Status message indicating the action taken
+    """
+    start_time_perf = timer()
+    logger.debug(f'Starting update_event for job {job_id}')
+    
+    try:
+        # Initialize the async task monitor
+        monitor = AsyncTaskMonitor(region=AWS_REGION)
+        
+        # Determine what to do based on the deployment status
+        if workflow_status == "COMPLETE" and alarm_status == "SUCCESS":
+            # Deployment successful - mark job as complete
+            success = monitor.update_task(job_id, {"status": "complete"})
+            
+            if success:
+                result = (
+                    f"✅ Event {job_id} marked as complete\n"
+                    f"📢 Slack notification will be sent automatically\n"
+                    f"Status: workflow_status={workflow_status}, alarm_status={alarm_status}"
+                )
+                logger.info(f"Successfully updated event {job_id} to complete")
+            else:
+                result = f"❌ Failed to update event {job_id}"
+                logger.error(f"Failed to update event {job_id}")
+                
+        elif workflow_status == "COMPLETE" and alarm_status == "FAILURE":
+            # Deployment failed - keep job open for investigation
+            result = (
+                f"⚠️ Deployment completed but alarm not resolved\n"
+                f"Event {job_id} kept open for investigation\n"
+                f"Status: workflow_status={workflow_status}, alarm_status={alarm_status}"
+            )
+            logger.info(f"Event {job_id} failed - keeping open")
+            
+        elif workflow_status == "PENDING":
+            # Still pending - no action needed
+            result = (
+                f"⏳ Deployment still pending for event {job_id}\n"
+                f"No update needed at this time"
+            )
+            logger.info(f"Event {job_id} still pending")
+            
+        else:
+            result = f"❓ Unknown status combination: workflow_status={workflow_status}, alarm_status={alarm_status}"
+            logger.warning(f"Unknown status for event {job_id}: {workflow_status}/{alarm_status}")
+        
+        elapsed_time = timer() - start_time_perf
+        logger.info(f'update_event completed in {elapsed_time:.3f}s')
+        return result
+        
+    except Exception as e:
+        logger.error(f'Error in update_event: {str(e)}', exc_info=True)
+        return f'Error updating event status: {str(e)}'
+
 
 def main():
     """Run the MCP server."""

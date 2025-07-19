@@ -3,6 +3,8 @@ import threading
 import uuid
 import boto3
 import os
+import aiohttp
+import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Any
@@ -88,9 +90,18 @@ class AsyncTaskMonitor:
             id='master_poller',
             replace_existing=True,
         )
+        
+        # Deployment status polling job that runs every 10 seconds
+        self.scheduler.add_job(
+            self._poll_deployment_status,
+            'interval',
+            seconds=10,
+            id='deployment_poller',
+            replace_existing=True,
+        )
 
         self.scheduler.start()
-        logger.debug('Scheduler initialized with master polling job')
+        logger.debug('Scheduler initialized with master polling job and deployment poller')
 
     async def _stop_loop(self):
         """Stop the event loop gracefully."""
@@ -121,6 +132,63 @@ class AsyncTaskMonitor:
 
         except Exception as e:
             logger.error(f'Error in master polling: {e}')
+    
+    async def _poll_deployment_status(self):
+        """Poll for completed deployment jobs and send notifications."""
+        logger.debug(f'Deployment poller running at {datetime.now()}')
+        
+        try:
+            # Scan for completed jobs
+            response = self.table.scan(
+                FilterExpression='#s = :complete',
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={':complete': 'complete'},
+            )
+            
+            items = response.get('Items', [])
+            
+            # Handle pagination if needed
+            while 'LastEvaluatedKey' in response:
+                response = self.table.scan(
+                    ExclusiveStartKey=response['LastEvaluatedKey'],
+                    FilterExpression='#s = :complete',
+                    ExpressionAttributeNames={'#s': 'status'},
+                    ExpressionAttributeValues={':complete': 'complete'},
+                )
+                items.extend(response.get('Items', []))
+            
+            # Check for deployment-related jobs
+            for item in items:
+                job_id = item.get('job_id', '')
+                
+                # Check if this is a deployment job (has deployment_id in context or prompt)
+                prompt = item.get('prompt', '')
+                is_deployment = False
+                
+                if isinstance(prompt, str):
+                    # Check if this is a deployment-related job
+                    is_deployment = any(term in prompt.lower() for term in ['deployment', 'deploy', 'alarm'])
+                
+                if is_deployment:
+                    # Check if we've already notified for this job
+                    notified_key = f'notified_{job_id}'
+                    if not hasattr(self, '_notified_jobs'):
+                        self._notified_jobs = set()
+                    
+                    if notified_key not in self._notified_jobs:
+                        # Send Slack notification
+                        message = (
+                            "🎉 *Deployment Successful!* 🎉\n\n"
+                            "The deployment was successful and your memory usage has decreased back to normal levels."
+                        )
+                        await self.send_slack_notification(message, job_id)
+                        
+                        # Mark as notified
+                        self._notified_jobs.add(notified_key)
+                        logger.info(f"Sent Slack notification for successful deployment job {job_id}")
+            
+        except Exception as e:
+            logger.error(f'Error in deployment polling: {e}')
 
     def create_investigation(
         self, question: str, initial_context: Dict[str, Any], job_id: Optional[str] = None
@@ -206,6 +274,47 @@ class AsyncTaskMonitor:
     def stop_task(self, job_id: str) -> bool:
         """Stop monitoring a specific task."""
         return self.update_task(job_id, {'status': 'complete'})
+    
+    async def send_slack_notification(self, message: str, job_id: str = None):
+        """Send notification to Slack webhook."""
+        webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+        if not webhook_url:
+            logger.warning("SLACK_WEBHOOK_URL not configured, skipping notification")
+            return
+        
+        payload = {
+            "text": message,
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": message
+                    }
+                }
+            ]
+        }
+        
+        if job_id:
+            payload["blocks"].append({
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"Job ID: `{job_id}`"
+                    }
+                ]
+            })
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=payload) as response:
+                    if response.status == 200:
+                        logger.info(f"Slack notification sent successfully for job {job_id}")
+                    else:
+                        logger.error(f"Failed to send Slack notification: {response.status}")
+        except Exception as e:
+            logger.error(f"Error sending Slack notification: {e}")
 
     async def _process_investigation(self, job_id: str, job_data: Dict[str, Any]):
         """Process a single investigation by feeding context to LLM."""
