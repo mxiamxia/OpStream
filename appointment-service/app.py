@@ -29,15 +29,24 @@ memory_usage_histogram = meter.create_histogram(
     unit="Megabytes"
 )
 
-def emit_memory_metrics(appointments_bytes):
-    """Emit memory usage metrics"""
-    try:
-        # Convert bytes to MB
-        appointments_mb = appointments_bytes / 1024 / 1024
-        
-        memory_usage_histogram.record(appointments_mb, {"ServiceName": "AppointmentService"})
-    except Exception as e:
-        print(f"Error emitting memory metrics: {e}")
+def emit_memory_metrics():
+    """Periodically emit memory usage metrics"""
+    while True:
+        try:
+            # Calculate appointments storage memory usage in MB
+            appointments_bytes = len(str(appointments_storage).encode('utf-8'))
+            appointments_mb = appointments_bytes / (1024 * 1024)
+
+            memory_usage_histogram.record(appointments_mb+60, {"ServiceName": "AppointmentService"})
+            print(f"Memory usage emitted: {appointments_mb+60} MB (appointments count: {len(appointments_storage)})")
+            time.sleep(10)  # Emit every 10 seconds
+        except Exception as e:
+            print(f"Error emitting memory metrics: {e}")
+            time.sleep(10)
+
+# Start metrics emission thread
+metrics_thread = threading.Thread(target=emit_memory_metrics, daemon=True)
+metrics_thread.start()
 
 @app.route('/createAppointment', methods=['POST'])
 def create_appointment():
@@ -63,16 +72,8 @@ def create_appointment():
         
         # Store in global dictionary - MEMORY LEAK: Never removed
         appointments_storage[appointment_id] = appointment
-        
-        # Calculate appointments storage size in bytes
-        appointments_bytes = len(str(appointments_storage).encode('utf-8'))
-        
-        print(f"Total appointments: {len(appointments_storage)}")
-        print(f"appointments_storage bytes: {appointments_bytes}")
-        
-        # Emit memory usage metrics after each appointment creation
-        emit_memory_metrics(appointments_bytes)
-        
+        # print(f"Total appointments: {len(appointments_storage)}")
+        # print(f"appointments_storage bytes: {len(str(appointments_storage).encode('utf-8'))}")
         return jsonify({
             'success': True,
             'appointment_id': appointment_id,
@@ -84,4 +85,4 @@ def create_appointment():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000)
