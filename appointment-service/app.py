@@ -29,23 +29,15 @@ memory_usage_histogram = meter.create_histogram(
     unit="Megabytes"
 )
 
-def emit_memory_metrics():
-    """Periodically emit memory usage metrics"""
-    while True:
-        try:
-            # Calculate appointments storage memory usage in MB
-            appointments_bytes = len(str(appointments_storage).encode('utf-8'))
-            appointments_mb = appointments_bytes / 1024 / 1024
-            
-            memory_usage_histogram.record(appointments_mb, {"ServiceName": "AppointmentService"})
-            time.sleep(10)  # Emit every 10 seconds
-        except Exception as e:
-            print(f"Error emitting memory metrics: {e}")
-            time.sleep(10)
-
-# Start metrics emission thread
-metrics_thread = threading.Thread(target=emit_memory_metrics, daemon=True)
-metrics_thread.start()
+def emit_memory_metrics(appointments_bytes):
+    """Emit memory usage metrics"""
+    try:
+        # Convert bytes to MB
+        appointments_mb = appointments_bytes / 1024 / 1024
+        
+        memory_usage_histogram.record(appointments_mb, {"ServiceName": "AppointmentService"})
+    except Exception as e:
+        print(f"Error emitting memory metrics: {e}")
 
 @app.route('/createAppointment', methods=['POST'])
 def create_appointment():
@@ -71,8 +63,16 @@ def create_appointment():
         
         # Store in global dictionary - MEMORY LEAK: Never removed
         appointments_storage[appointment_id] = appointment
+        
+        # Calculate appointments storage size in bytes
+        appointments_bytes = len(str(appointments_storage).encode('utf-8'))
+        
         print(f"Total appointments: {len(appointments_storage)}")
-        print(f"appointments_storage bytes: {len(str(appointments_storage).encode('utf-8'))}")
+        print(f"appointments_storage bytes: {appointments_bytes}")
+        
+        # Emit memory usage metrics after each appointment creation
+        emit_memory_metrics(appointments_bytes)
+        
         return jsonify({
             'success': True,
             'appointment_id': appointment_id,
