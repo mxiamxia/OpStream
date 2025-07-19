@@ -24,7 +24,7 @@ meter = metrics.get_meter(__name__)
 
 # Create memory usage gauge
 memory_usage_gauge = meter.create_gauge(
-    name="MemUsage",
+    name="MemoryUsage",
     description="Memory usage of the appointment service in MB",
     unit="Megabytes"
 )
@@ -33,15 +33,15 @@ def emit_memory_metrics():
     """Periodically emit memory usage metrics"""
     while True:
         try:
-            process = psutil.Process(os.getpid())
-            memory_info = process.memory_info()
-            memory_mb = memory_info.rss / 1024 / 1024
+            # Calculate appointments storage memory usage in MB
+            appointments_bytes = len(str(appointments_storage).encode('utf-8'))
+            appointments_mb = appointments_bytes / 1024 / 1024
             
-            memory_usage_gauge.set(memory_mb, {"ServiceName": "AppointmentService"})
-            time.sleep(10)  # Emit every 30 seconds
+            memory_usage_gauge.set(appointments_mb, {"ServiceName": "AppointmentService"})
+            time.sleep(10)  # Emit every 10 seconds
         except Exception as e:
             print(f"Error emitting memory metrics: {e}")
-            time.sleep(30)
+            time.sleep(10)
 
 # Start metrics emission thread
 metrics_thread = threading.Thread(target=emit_memory_metrics, daemon=True)
@@ -71,7 +71,8 @@ def create_appointment():
         
         # Store in global dictionary - MEMORY LEAK: Never removed
         appointments_storage[appointment_id] = appointment
-        
+        print(f"Total appointments: {len(appointments_storage)}")
+        print(f"appointments_storage bytes: {len(str(appointments_storage).encode('utf-8'))}")
         return jsonify({
             'success': True,
             'appointment_id': appointment_id,

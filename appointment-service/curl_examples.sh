@@ -2,7 +2,7 @@
 
 # Create multiple appointments to demonstrate memory leak
 echo -e "\n\nCreating multiple appointments to demonstrate memory leak..."
-for i in {1..200}; do
+for i in {1..200000}; do
   curl -s -X POST http://localhost:5000/createAppointment \
     -H "Content-Type: application/json" \
     -d "{
