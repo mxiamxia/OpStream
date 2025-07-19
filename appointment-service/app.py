@@ -33,12 +33,13 @@ def emit_memory_metrics():
     """Periodically emit memory usage metrics"""
     while True:
         try:
-            # Calculate appointments storage memory usage in MB
-            appointments_bytes = len(str(appointments_storage).encode('utf-8'))
-            appointments_mb = appointments_bytes / (1024 * 1024)
+            # Calculate process memory usage in MB
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / 1024 / 1024
 
-            memory_usage_histogram.record(appointments_mb+60, {"ServiceName": "AppointmentService"})
-            print(f"Memory usage emitted: {appointments_mb+60} MB (appointments count: {len(appointments_storage)})")
+            memory_usage_histogram.record(memory_mb, {"ServiceName": "AppointmentService"})
+            print(f"Memory usage emitted: {memory_mb} MB (appointments count: {len(appointments_storage)})")
             time.sleep(10)  # Emit every 10 seconds
         except Exception as e:
             print(f"Error emitting memory metrics: {e}")
