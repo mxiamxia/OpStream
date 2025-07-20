@@ -1,11 +1,6 @@
 name: DeployAndSoaking
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - 'appointment-service/**'
   workflow_dispatch:
 
 jobs:

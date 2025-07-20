@@ -125,7 +125,7 @@ jobs:
           
           echo "Deployment completed successfully. Application and traffic generation are running continuously on EC2."
           
-          echo "Step 7: Wait for 5 minutes of soak testing"
-          sleep 300
+          echo "Step 7: Wait for 20 minutes of soak testing"
+          sleep 1200
           
           echo "Soak testing completed. Workflow finished."
