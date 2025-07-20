@@ -1,23 +1,26 @@
 from flask import Flask, request, jsonify
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import threading
 import time
 import psutil
 import os
+import heapq
+from collections import OrderedDict
 from opentelemetry import metrics
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader, ConsoleMetricExporter
 
 app = Flask(__name__)
 
-# Global dictionary to store appointments - THIS CREATES A MEMORY LEAK
-appointments_storage = {}
+# Use OrderedDict with a maximum size to prevent memory leaks
+MAX_APPOINTMENTS = 100  # Maximum number of appointments to keep in memory
+appointments_storage = OrderedDict()
 
 # Initialize OpenTelemetry metrics
 metric_reader = PeriodicExportingMetricReader(
     ConsoleMetricExporter(),
-    export_interval_millis=30000  # Export every 60 seconds
+    export_interval_millis=30000  # Export every 30 seconds
 )
 metrics.set_meter_provider(MeterProvider(metric_readers=[metric_reader]))
 meter = metrics.get_meter(__name__)
@@ -29,10 +32,23 @@ memory_usage_histogram = meter.create_histogram(
     unit="Megabytes"
 )
 
+def cleanup_old_appointments():
+    """Remove old appointments to prevent memory leaks"""
+    try:
+        # Keep only the most recent MAX_APPOINTMENTS
+        while len(appointments_storage) > MAX_APPOINTMENTS:
+            # Remove the oldest appointment (first inserted)
+            appointments_storage.popitem(last=False)
+    except Exception as e:
+        print(f"Error during appointment cleanup: {e}")
+
 def emit_memory_metrics():
-    """Periodically emit memory usage metrics"""
+    """Periodically emit memory usage metrics and clean up old appointments"""
     while True:
         try:
+            # Clean up old appointments
+            cleanup_old_appointments()
+            
             # Calculate process memory usage in MB
             process = psutil.Process(os.getpid())
             memory_info = process.memory_info()
@@ -71,10 +87,12 @@ def create_appointment():
             'created_at': datetime.now().isoformat()
         }
         
-        # Store in global dictionary - MEMORY LEAK: Never removed
+        # Store in OrderedDict (will be cleaned up if exceeds MAX_APPOINTMENTS)
         appointments_storage[appointment_id] = appointment
-        # print(f"Total appointments: {len(appointments_storage)}")
-        # print(f"appointments_storage bytes: {len(str(appointments_storage).encode('utf-8'))}")
+        
+        # Clean up if needed
+        cleanup_old_appointments()
+        
         return jsonify({
             'success': True,
             'appointment_id': appointment_id,
@@ -84,6 +102,14 @@ def create_appointment():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/appointments', methods=['GET'])
+def get_appointments():
+    """Return the current list of appointments (limited to MAX_APPOINTMENTS)"""
+    return jsonify({
+        'appointments': list(appointments_storage.values()),
+        'count': len(appointments_storage)
+    })
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=5000)
